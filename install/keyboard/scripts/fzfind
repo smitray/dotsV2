@@ -1,0 +1,136 @@
+#!/bin/bash
+# fzfind - File search with rg/fd + fzf + preview
+# Usage: fzfind [directory] [initial query]
+# Dependencies: fd, fzf, bat (optional for preview), rg (optional)
+
+set -e
+
+# Check dependencies
+command -v fzf >/dev/null 2>&1 || { echo "Error: fzf not installed"; exit 1; }
+
+# Default search directory
+SEARCH_DIR="${1:-.}"
+INITIAL_QUERY="${2:-}"
+
+# Preview command - use bat if available, otherwise cat
+if command -v bat >/dev/null 2>&1; then
+    PREVIEW_CMD="bat --color=always --style=numbers --line-range=:500 {}"
+else
+    PREVIEW_CMD="cat {}"
+fi
+
+# Header with keybindings
+HEADER="
+Enter: open | Ctrl-O: open | Ctrl-Y: copy path | Ctrl-D: cd to dir | Ctrl-R: rg search | Ctrl-F: fd files | Ctrl-G: fd all
+"
+
+# FZF options
+FZF_OPTS_COMMON="
+  --height 80%
+  --layout reverse
+  --border rounded
+  --preview-window right:50%
+  --ansi
+  --header '$HEADER'
+"
+
+# File search with fd
+search_files() {
+    fd --type f --hidden --follow --exclude .git . "$SEARCH_DIR" 2>/dev/null | head -1000
+}
+
+# All files including hidden
+search_all() {
+    fd --hidden --follow --exclude .git . "$SEARCH_DIR" 2>/dev/null | head -1000
+}
+
+# Content search with rg
+search_content() {
+    local query="$1"
+    rg --color=always --line-number --no-heading --smart-case "$query" "$SEARCH_DIR" 2>/dev/null | head -500 | \
+        awk -F: '{printf \"\033[36m%s\033[0m:\033[32m%s\033[0m:%s\n\", $1, $2, substr($0, index($0,$3))}'
+}
+
+# Main file finder
+find_files() {
+    search_files | fzf ${FZF_OPTS_COMMON} \
+        --prompt '󰈞 Files> ' \
+        --query "$INITIAL_QUERY" \
+        --preview "$PREVIEW_CMD" \
+        --bind 'ctrl-o:execute(${EDITOR:-nvim} {})' \
+        --bind 'ctrl-y:execute-silent(echo {} | wl-copy)+abort' \
+        --bind 'ctrl-d:execute(cd $(dirname {}))+abort' \
+        --bind 'ctrl-f:reload(search_files)' \
+        --bind 'ctrl-g:reload(search_all)' \
+        --bind 'ctrl-r:change-prompt(󰱽 Content> )+reload(search_content {q} || true)+clear-query'
+}
+
+# Content search mode
+find_content() {
+    local query="${1:-}"
+
+    if [[ -z "$query" ]]; then
+        echo "Usage: fzfind -r <search-pattern>"
+        exit 1
+    fi
+
+    search_content "$query" | fzf ${FZF_OPTS_COMMON} \
+        --prompt "󰱽 Content: $query> " \
+        --preview 'bat --color=always --style=numbers --highlight-line {2} {1} 2>/dev/null || cat {1}' \
+        --preview-window right:50%:+{2} \
+        --delimiter ':' \
+        --nth 3.. \
+        --bind 'ctrl-o:execute(${EDITOR:-nvim} +{2} {1})' \
+        --bind 'ctrl-y:execute-silent(echo {1} | wl-copy)+abort'
+}
+
+# Parse arguments
+MODE="files"
+while getopts "r:h" opt; do
+    case $opt in
+        r)
+            MODE="content"
+            CONTENT_QUERY="$OPTARG"
+            ;;
+        h)
+            echo "Usage: fzfind [-r <search-pattern>] [directory] [initial-query]"
+            echo ""
+            echo "Options:"
+            echo "  -r <pattern>  Search file content with ripgrep"
+            echo "  -h            Show this help"
+            echo ""
+            echo "Keybindings:"
+            echo "  Enter        Open selected file"
+            echo "  Ctrl-O       Open with \$EDITOR"
+            echo "  Ctrl-Y       Copy file path to clipboard"
+            echo "  Ctrl-D       cd to file's directory"
+            echo "  Ctrl-R       Switch to content search (rg)"
+            echo "  Ctrl-F       Search files only"
+            echo "  Ctrl-G       Search all files (including hidden)"
+            exit 0
+            ;;
+        *)
+            exit 1
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+# Update search dir if provided after options
+if [[ -n "$1" ]]; then
+    SEARCH_DIR="$1"
+    shift
+fi
+if [[ -n "$1" ]]; then
+    INITIAL_QUERY="$1"
+fi
+
+# Run appropriate mode
+case "$MODE" in
+    content)
+        find_content "$CONTENT_QUERY"
+        ;;
+    files)
+        find_files
+        ;;
+esac

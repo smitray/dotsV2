@@ -1,0 +1,59 @@
+#!/bin/bash
+# fzcd - Interactive directory jumping with zoxide + fzf
+# Usage: fzcd [initial query]
+# Dependencies: zoxide, fzf, fd (optional)
+
+set -e
+
+# Check dependencies
+command -v zoxide >/dev/null 2>&1 || { echo "Error: zoxide not installed"; exit 1; }
+command -v fzf >/dev/null 2>&1 || { echo "Error: fzf not installed"; exit 1; }
+
+# FZF theme and options
+FZF_OPTS="
+  --height 60%
+  --layout reverse
+  --border rounded
+  --preview 'ls -la --color=always {2} 2>/dev/null || echo \"Not accessible\"'
+  --preview-window right:40%
+  --prompt '󰋞 Jump> '
+  --bind 'ctrl-d:execute(echo {2})+abort'
+  --bind 'ctrl-r:reload(zoxide query -l -s 2>/dev/null)'
+  --bind 'ctrl-f:change-prompt(󰈞 Search> )+reload(fd --type d --hidden --exclude .git . 2>/dev/null | head -200)'
+  --header 'Enter: jump | Ctrl-D: print path | Ctrl-R: refresh | Ctrl-F: fd search'
+"
+
+# Get directories from zoxide (sorted by frecency)
+get_zoxide_dirs() {
+    zoxide query -l -s 2>/dev/null | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' || true
+}
+
+# Main function
+main() {
+    local initial_query="${1:-}"
+    local selected
+
+    # Get directories and pipe to fzf
+    selected=$(get_zoxide_dirs | \
+        fzf ${FZF_OPTS} \
+        --query "$initial_query" \
+        --with-nth 1 \
+        --nth 1)
+
+    if [[ -z "$selected" ]]; then
+        exit 0
+    fi
+
+    # Extract path (remove score)
+    local path
+    path=$(echo "$selected" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ *$//')
+
+    # Check if we should just print (Ctrl-D) or cd
+    if [[ -n "$path" ]]; then
+        if [[ -d "$path" ]]; then
+            echo "$path"
+        fi
+    fi
+}
+
+main "$@"

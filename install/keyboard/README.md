@@ -27,6 +27,56 @@ This configuration provides an intent-based input system with 4+ distinct layers
 | **CODE** | RightAlt (toggle) | IDE/Neovim commands |
 | **POWER** | RightControl (oneshot/toggle) | Hyprland WM, applications |
 | **NUM** | Menu/Compose (toggle) | Data entry, calculator |
+| **TOOLS** | CapsLock (toggle) | Dev tools (tmux, nvim, lf) |
+| **FZF** | LeftControl (oneshot) or Tab from TOOLS | FZF/RG/Zoxide utilities |
+
+### Quick Reference - All Keybindings
+
+| Layer | Trigger | Key | Purpose/Action |
+|-------|---------|-----|----------------|
+| **BASE** | Default | A/S/D/F (hold) | Meta/Alt/Shift/Ctrl (left hand) |
+| **BASE** | Default | J/K/L/; (hold) | Ctrl/Shift/Alt/Meta (right hand) |
+| **BASE** | Default | LeftShift | Escape |
+| **BASE** | Default | RightShift | Backspace |
+| **BASE** | Default | RightAlt | Toggle CODE layer |
+| **BASE** | Default | RightControl | Toggle/oneshot POWER layer |
+| **BASE** | Default | Menu/Compose | Toggle NUM layer |
+| **BASE** | Default | CapsLock | Toggle TOOLS layer |
+| **BASE** | Default | LeftControl | Oneshot FZF layer |
+| **CODE** | RightAlt | 1-5 | F5,F9-F12 (debugging) |
+| **CODE** | RightAlt | G | Go to Definition |
+| **CODE** | RightAlt | A/E | Home/End |
+| **CODE** | RightAlt | S/D | PageUp/PageDown |
+| **CODE** | RightAlt | 6-9 | Command Palette, Quick Open, Search, Sidebar |
+| **CODE** | RightAlt | B/T/W/N/P | Tmux prefix/new/close/next/prev |
+| **CODE** | RightAlt | H/J/K/L | Window focus left/down/up/right |
+| **CODE** | RightAlt | ;/Space | Escape |
+| **POWER** | RightControl | 1-0 | Workspace 1-10 |
+| **POWER** | RightControl | H/J/K/L | Focus window |
+| **POWER** | RightControl | Z/X/C/V | Move window |
+| **POWER** | RightControl | Q/F/N | Kill/Fullscreen/Float |
+| **POWER** | RightControl | E/R/W/M | Launch file manager/editor/browser/Discord |
+| **POWER** | RightControl | S/P | Screenshot |
+| **NUM** | Menu | U/I/O | 7/8/9 |
+| **NUM** | Menu | J/K/L | 4/5/6 |
+| **NUM** | Menu | M/,/Space | 1/2/0 |
+| **NUM** | Menu | ;/P/Y/H | + - * / |
+| **TOOLS** | CapsLock | T/N/F/O/D | Terminal/Neovim/lf/OpenCode/Droid |
+| **TOOLS** | CapsLock | 1-0 | Tmux windows 1-10 |
+| **TOOLS** | CapsLock | B/H/J/K/L | Tmux prefix/pane navigation |
+| **TOOLS** | CapsLock | C/W/N/P | Tmux new window/list/next/prev |
+| **TOOLS** | CapsLock | V/G | Tmux split vertical/horizontal |
+| **TOOLS** | CapsLock | Tab | Toggle FZF layer |
+| **FZF** | LeftControl/Tab | J | fzcd - zoxide jump |
+| **FZF** | LeftControl/Tab | F | fzfind - file search |
+| **FZF** | LeftControl/Tab | G | fzfind -rg - content search |
+| **FZF** | LeftControl/Tab | B | fzgit branch |
+| **FZF** | LeftControl/Tab | L | fzgit log |
+| **FZF** | LeftControl/Tab | S | fzgit status |
+| **FZF** | LeftControl/Tab | Shift+S | fzgit stash |
+| **FZF** | LeftControl/Tab | C | fzgit commit |
+| **FZF** | LeftControl/Tab | W | fzgit worktree |
+| **FZF** | LeftControl/Tab | H | fzhist - command history |
 
 ### Key Remappings
 
@@ -49,10 +99,25 @@ Using `overloadt2` for tap/hold detection (180ms timeout):
 - `L` = Alt (tap = l)
 - `;` = Meta (tap = semicolon)
 
-#### Symbol Overloading
-Number row provides shifted symbols on hold:
-- Tap: `1 2 3 4 5 6 7 8 9 0 - =`
-- Hold: `! @ # $ % ^ & * ( ) _ +`
+#### Symbol Overloading (Number Row & Bottom Row)
+
+Using `overload()` with a dedicated `[symbols]` layer: tap for the base key, hold for the shifted symbol.
+
+**Number Row** - tap for number, hold for shifted symbol:
+
+| Key | \` | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 0 | - | = |
+|-----|-----|---|---|---|---|---|---|---|---|---|---|---|---|
+| Tap | \` | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 0 | - | = |
+| Hold | ~ | ! | @ | # | $ | % | ^ | & | * | ( | ) | _ | + |
+
+**Bottom Row & Apostrophe** - tap for symbol, hold for shifted symbol:
+
+| Key | , | . | / | ' |
+|-----|---|---|---|---|
+| Tap | , | . | / | ' |
+| Hold | < | > | ? | : |
+
+**Implementation:** Uses `overload(symbols, key)` in `[main]` layer with shifted symbols defined in `[symbols]` layer.
 
 ---
 
@@ -61,10 +126,18 @@ Number row provides shifted symbols on hold:
 ### BASE Layer
 
 Default typing layer with:
-- Home row modifiers (via `overloadt2`)
-- Symbol overloading on number row
-- Shift key overrides
+- Home row modifiers (via `overloadt2`, 180ms timeout)
+- Symbol overloading using `overload()` with `[symbols]` layer
+- Shift key overrides (LeftShift=Esc, RightShift=Backspace)
 - Layer toggles
+
+**Symbol Overload Mappings:**
+Using `overload(symbols, key)` syntax - tap for base key, hold for shifted symbol:
+- Number row: `1 = overload(symbols, 1)` → tap=1, hold=!
+- Bottom row: `comma = overload(symbols, comma)` → tap=,, hold=<
+- Apostrophe: `apostrophe = overload(symbols, apostrophe)` → tap=', hold=:
+
+The `[symbols]` layer defines the shifted outputs: `1 = S-1` (!), `comma = S-comma` (<), etc.
 
 **Layer Toggle Keys:**
 ```
@@ -253,6 +326,112 @@ Space  →  0
 | / | KPEnter |
 
 **Exit:** Press `Esc` or `Menu/Compose` again
+
+### TOOLS Layer (Development Tools)
+
+**Trigger:** CapsLock (toggle)
+
+**Launchers:**
+| Key | Action |
+|-----|--------|
+| T | Launch Terminal (with tmux) |
+| N | Launch Neovim |
+| F | Launch lf file manager |
+| O | Launch OpenCode |
+| D | Launch Droid |
+
+**TMUX Controls:**
+| Key | Action |
+|-----|--------|
+| B | Send prefix (C-b) |
+| H/J/K/L | Pane navigation |
+| C | New window |
+| W | Window list |
+| N/P | Next/Previous window |
+| V/G | Split vertical/horizontal |
+
+**Exit:** Press `Esc` or `CapsLock` again
+
+### FZF Layer (RG/FD/Zoxide Utilities)
+
+**Trigger:** LeftControl (oneshot hold) or Tab from TOOLS layer
+
+**Zoxide Directory Jumping:**
+| Key | Script | Action |
+|-----|--------|--------|
+| J | `fzcd` | Interactive zoxide jump with preview |
+| Z | - | Zoxide jump fallback |
+
+**File Search (FD + RG):**
+| Key | Script | Action |
+|-----|--------|--------|
+| F | `fzfind` | File search with fd + preview |
+| G | `fzfind -r` | Content search with ripgrep |
+| R | - | Raw rg search mode |
+
+**Git Operations:**
+| Key | Script | Action |
+|-----|--------|--------|
+| B | `fzgit branch` | Branch switch/merge/delete |
+| L | `fzgit log` | Browse commit history |
+| S | `fzgit status` | Interactive staging |
+| Shift+S | `fzgit stash` | Stash management |
+| C | `fzgit commit` | Build commit interactively |
+| W | `fzgit worktree` | Worktree management |
+
+**History & Shell:**
+| Key | Script | Action |
+|-----|--------|--------|
+| H | `fzhist` | Search command history |
+| M | - | Man pages with fzf |
+
+**Exit:** Press `Esc`, release LeftControl, or press `Tab` again
+
+---
+
+## FZF Utility Scripts
+
+Four powerful CLI utilities using `fzf`, `rg`, `fd`, and `zoxide`:
+
+### fzcd - Directory Jumping
+```bash
+fzcd [initial-query]     # Interactive zoxide jump
+```
+- **Ctrl-D:** Print path without cd
+- **Ctrl-R:** Refresh zoxide database
+- **Ctrl-F:** Switch to fd search mode
+- Preview shows directory contents
+
+### fzfind - File Search
+```bash
+fzfind [directory] [query]      # Find files with preview
+fzfind -r <pattern>             # Search content with rg
+```
+- **Ctrl-O:** Open in $EDITOR
+- **Ctrl-Y:** Copy path to clipboard
+- **Ctrl-D:** cd to file's directory
+- **Ctrl-R:** Switch to content search
+- Uses `bat` for syntax-highlighted preview if available
+
+### fzgit - Git Operations
+```bash
+fzgit log        # Browse commits with diff preview
+fzgit branch     # Switch, merge, rebase, delete branches
+fzgit stash      # Pop, apply, drop stashes
+fzgit status     # Interactive staging/unstaging
+fzgit commit     # Build commit with file selection
+fzgit worktree   # Manage git worktrees
+fzgit remote     # Checkout remote branches
+```
+
+### fzhist - Command History
+```bash
+fzhist [query]    # Search shell history
+```
+- **Ctrl-E:** Edit command before execution
+- **Ctrl-Y:** Copy to clipboard
+- **Ctrl-R:** Show raw history
+- **Alt-Enter:** Print without executing
 
 ---
 
@@ -462,15 +641,16 @@ sudo keyd monitor
 | Action | Description |
 |--------|-------------|
 | `overload(layer, key)` | Tap = key, Hold = layer |
-| `overloadt2(layer, key, timeout)` | Like overload but with explicit timeout |
+| `overloadt2(layer, key, timeout)` | Like overload but with explicit timeout (used for home row mods) |
+| `timeout(hold_action, timeout, tap_action)` | Hold for timeout ms = hold_action, tap = tap_action (used for symbols) |
 | `toggle(layer)` | Toggle layer on/off |
 | `oneshot(layer)` | Active for next key only |
-| `lettermod(mod, key, tap_ms, hold_ms)` | Not used (not available in keyd) |
 
 ### Timing Parameters
 
 - **Global overload timeout:** 200ms (`overload_tap_timeout`)
 - **Home row mods:** 180ms (per-key via `overloadt2`)
+- **Symbol timeout:** 100ms (number row, bottom row, apostrophe via `timeout()`)
 
 ### Modifier Notation
 
@@ -513,6 +693,10 @@ sudo keyd monitor
 6. **Removed invalid key codes** - `b1`, `s1`, `pwr`, etc. are not valid keyd names
 7. **Removed non-existent keypad codes** - `kpequal`, `kpmemoryadd`, etc.
 8. **Added modifier layers** - `[meta_a:M]`, `[alt_s:A]`, etc. for home row mods
+9. **Replaced invalid `timeout()` with `overload()` for symbols** - Uses `[symbols]` layer for shifted outputs
+10. **Added `[symbols]` layer** - Defines shifted symbols for number row and bottom row
+11. **Added bottom row symbols** - comma, dot, slash with `overload(symbols, key)`
+12. **Added apostrophe mapping** - `overload(symbols, apostrophe)` → tap `'`, hold `:`
 
 ### Install Script Fixes
 

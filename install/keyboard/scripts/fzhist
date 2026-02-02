@@ -1,0 +1,91 @@
+#!/bin/bash
+# fzhist - Command history search with fzf
+# Usage: fzhist [initial query]
+# Dependencies: fzf
+
+# FZF options with preview showing command details
+FZF_OPTS="
+  --height 60%
+  --layout reverse
+  --border rounded
+  --ansi
+  --tac
+  --sync
+  --prompt '󰋚 History> '
+  --header 'Enter: execute | Ctrl-E: edit | Ctrl-Y: copy | Ctrl-R: raw history | Alt-Enter: print only'
+"
+
+# Get shell history based on current shell
+get_history() {
+    if [[ -n "$ZSH_VERSION" ]]; then
+        # Zsh history
+        fc -l -n 1 2>/dev/null | sed 's/^\s*//' | awk '!seen[$0]++'
+    elif [[ -n "$BASH_VERSION" ]]; then
+        # Bash history
+        history | sed 's/^\s*[0-9]*\s*//' | awk '!seen[$0]++'
+    else
+        # Fallback - try to read history file
+        local histfile="${HISTFILE:-$HOME/.bash_history}"
+        if [[ -f "$histfile" ]]; then
+            tac "$histfile" 2>/dev/null | awk '!seen[$0]++' | head -1000
+        fi
+    fi
+}
+
+# Get raw history without deduplication (for Ctrl-R)
+get_raw_history() {
+    if [[ -n "$ZSH_VERSION" ]]; then
+        fc -l -n 1 2>/dev/null | tail -1000
+    elif [[ -n "$BASH_VERSION" ]]; then
+        history | tail -1000
+    else
+        local histfile="${HISTFILE:-$HOME/.bash_history}"
+        [[ -f "$histfile" ]] && tac "$histfile" 2>/dev/null | head -1000
+    fi
+}
+
+# Preview helper - show command info
+preview_cmd() {
+    local cmd="$1"
+    echo -e "\033[1;36mCommand:\033[0m"
+    echo "$cmd"
+    echo ""
+    echo -e "\033[1;36mWhich:\033[0m"
+    which $(echo "$cmd" | awk '{print $1}') 2>/dev/null || echo "(not in PATH)"
+    echo ""
+    echo -e "\033[1;36mMan page:\033[0m"
+    man $(echo "$cmd" | awk '{print $1}') 2>/dev/null | head -20 || echo "(no man page)"
+}
+
+# Main function
+main() {
+    local initial_query="$1"
+    local selection
+
+    # Use fzf to select from history
+    selection=$(get_history | \
+        fzf ${FZF_OPTS} \
+        --query "$initial_query" \
+        --preview 'echo {}' \
+        --preview-window down:3:wrap \
+        --bind 'ctrl-e:execute(${EDITOR:-nvim} <(echo {}))' \
+        --bind 'ctrl-y:execute-silent(echo {} | wl-copy)+abort' \
+        --bind 'ctrl-r:reload(get_raw_history)' \
+        --bind 'alt-enter:print-query')
+
+    # Handle selection
+    if [[ -z "$selection" ]]; then
+        exit 0
+    fi
+
+    # If Alt-Enter was used, just print without executing
+    if [[ "$selection" == "$initial_query" ]] && [[ -n "$initial_query" ]]; then
+        echo "$selection"
+        exit 0
+    fi
+
+    # Print and optionally execute
+    echo "$selection"
+}
+
+main "$@"

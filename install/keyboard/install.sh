@@ -14,6 +14,8 @@ NC='\033[0m' # No Color
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="$SCRIPT_DIR/keyd"
+SCRIPTS_DIR="$SCRIPT_DIR/scripts"
+BIN_DIR="$HOME/.local/bin"
 
 # Configuration paths
 KEYD_SYSTEM_CONFIG="/etc/keyd/default.conf"
@@ -298,6 +300,64 @@ show_panic_key() {
 }
 
 # Function to show summary
+# Function to install fzf utility scripts
+install_scripts() {
+    print_info "Installing FZF utility scripts..."
+
+    # Create bin directory if it doesn't exist
+    mkdir -p "$BIN_DIR"
+
+    # Check if scripts directory exists
+    if [ ! -d "$SCRIPTS_DIR" ]; then
+        print_warning "Scripts directory not found: $SCRIPTS_DIR"
+        return 0
+    fi
+
+    # Copy scripts and make them executable
+    local scripts=("fzcd" "fzfind" "fzgit" "fzhist")
+    for script in "${scripts[@]}"; do
+        if [ -f "$SCRIPTS_DIR/$script" ]; then
+            cp "$SCRIPTS_DIR/$script" "$BIN_DIR/$script"
+            chmod +x "$BIN_DIR/$script"
+            print_success "Installed $script to $BIN_DIR/$script"
+        else
+            print_warning "Script not found: $SCRIPTS_DIR/$script"
+        fi
+    done
+
+    # Check if ~/.local/bin is in PATH
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        print_warning "$BIN_DIR is not in your PATH"
+        print_info "Add the following to your ~/.bashrc or ~/.zshrc:"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
+}
+
+# Function to show fzf scripts help
+show_fzf_help() {
+    echo ""
+    echo -e "${BLUE}FZF Utility Scripts:${NC}"
+    echo "  fzcd     - Interactive directory jumping with zoxide"
+    echo "  fzfind   - File search with fd/rg + preview"
+    echo "  fzgit    - Git operations (log, branch, stash, commit)"
+    echo "  fzhist   - Command history search"
+    echo ""
+    echo -e "${BLUE}Keyd FZF Layer:${NC}"
+    echo "  Hold LeftControl (oneshot) to activate FZF layer"
+    echo "  Or press Tab while in TOOLS layer (CapsLock + Tab)"
+    echo ""
+    echo -e "${BLUE}FZF Layer Keybindings:${NC}"
+    echo "  j - fzcd (zoxide jump)"
+    echo "  f - fzfind (file search)"
+    echo "  g - rg content search"
+    echo "  b - fzgit branch"
+    echo "  l - fzgit log"
+    echo "  s - fzgit status/stash"
+    echo "  c - fzgit commit"
+    echo "  h - fzhist (history)"
+    echo ""
+}
+
 show_summary() {
     echo ""
     echo -e "${GREEN}================================================${NC}"
@@ -308,10 +368,16 @@ show_summary() {
     echo "  System: $KEYD_SYSTEM_CONFIG"
     echo "  User:   $KEYD_USER_CONFIG"
     echo ""
+    echo -e "${BLUE}Scripts installed:${NC}"
+    echo "  Location: $BIN_DIR"
+    echo "  Scripts: fzcd, fzfind, fzgit, fzhist"
+    echo ""
     echo -e "${BLUE}Layer mappings:${NC}"
     echo "  CODE Layer:    RightAlt (toggle)"
     echo "  POWER Layer:   RightControl (oneshot/toggle)"
     echo "  NUM Layer:     Menu key (toggle)"
+    echo "  TOOLS Layer:   CapsLock (toggle)"
+    echo "  FZF Layer:     LeftControl (oneshot) or Tab from TOOLS"
     echo ""
     echo -e "${BLUE}Key remappings:${NC}"
     echo "  LeftShift  -> Escape"
@@ -319,11 +385,13 @@ show_summary() {
     echo "  Home row:  A/S/D/F = Meta/Alt/Shift/Ctrl (left)"
     echo "  Home row:  J/K/L/; = Ctr/Shift/Alt/Meta (right)"
     echo ""
+    show_fzf_help
     echo -e "${BLUE}Next steps:${NC}"
     echo "  1. Verify keyboard detection: sudo keyd monitor"
-    echo "  2. Test layer toggles: Press RightAlt, RightControl, Menu"
-    echo "  3. Test panic key:  Backspace + Escape + Enter simultaneously"
-    echo "  4. Customize configuration: $KEYD_SYSTEM_CONFIG"
+    echo "  2. Test layer toggles: Press RightAlt, RightControl, CapsLock"
+    echo "  3. Test FZF layer: Hold LeftControl and press 'j' for fzcd"
+    echo "  4. Test panic key:  Backspace + Escape + Enter simultaneously"
+    echo "  5. Add $BIN_DIR to your PATH if not already done"
     echo ""
     echo -e "${BLUE}Useful commands:${NC}"
     echo "  Check status:    sudo systemctl status keyd"
@@ -371,6 +439,7 @@ main() {
     detect_keyboard
     copy_system_config
     copy_user_config
+    install_scripts
     create_systemd_service
     check_keyd_running
     validate_config
