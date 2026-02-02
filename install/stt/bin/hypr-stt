@@ -241,9 +241,10 @@ stop_recording() {
     # Secure audio file before use
     chmod 600 "$AUDIO_FILE" 2>/dev/null || true
     
-    # API call
+    # API call - use unique separator to reliably extract HTTP code
     local response http_code body
-    response=$(curl -s -w "\n%{http_code}" \
+    local http_code_sep="___HTTP_CODE___"
+    response=$(curl -s -w "${http_code_sep}%{http_code}" \
         --max-time 60 \
         -X POST "$API_URL" \
         -F "file=@$AUDIO_FILE;type=audio/wav" \
@@ -251,24 +252,30 @@ stop_recording() {
         -F "language=$LANGUAGE" \
         -F "response_format=text" 2>/dev/null) || true
     
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    http_code=$(echo "$response" | grep -o "${http_code_sep}[0-9]*" | sed "s/${http_code_sep}//")
+    body=$(echo "$response" | sed "s/${http_code_sep}[0-9]*$//" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     
     # Cleanup audio file
     rm -f "$AUDIO_FILE"
     
-    if [[ "$http_code" == "200" && -n "$body" && "$body" != "null" ]]; then
-        # Capitalize first letter
-        local text
-        text=$(echo "$body" | sed 's/^./\U&/')
-        
-        # Type the text
-        type_text "$text"
-        
-        # Show truncated notification
-        local display_text="${text:0:50}"
-        [[ ${#text} -gt 50 ]] && display_text="${display_text}..."
-        notify "emblem-ok" "Typed: $display_text" "normal"
+    if [[ "$http_code" == "200" ]]; then
+        if [[ -n "$body" && "$body" != "null" ]]; then
+            # Capitalize first letter
+            local text
+            text=$(echo "$body" | sed 's/^./\U&/')
+            
+            # Type the text
+            type_text "$text"
+            
+            # Show truncated notification
+            local display_text="${text:0:50}"
+            [[ ${#text} -gt 50 ]] && display_text="${display_text}..."
+            notify "emblem-ok" "Typed: $display_text" "normal"
+        else
+            # Empty transcription - no speech detected
+            notify "dialog-information" "No speech detected" "low"
+            echo "[hypr-stt] No speech detected (empty transcription)" >&2
+        fi
     else
         notify "dialog-error" "Transcription failed (HTTP ${http_code:-error})" "critical"
         echo "[hypr-stt] Error - HTTP $http_code: $body" >&2
