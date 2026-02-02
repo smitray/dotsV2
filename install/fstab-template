@@ -1,0 +1,27 @@
+# /etc/fstab: static file system information
+# <file system>             <mount point>      <type>  <options>                                                   <dump> <pass>
+
+# UEFI System
+efivarfs                     /sys/firmware/efi/efivars efivarfs rw,nosuid,nodev,noexec,relatime              0      0
+
+# DISK 1: System + Recovery + Docker + Downloads (NVME 1 - 1TB, 100GB free for Btrfs - PRODUCTION OPTIMIZED)
+/dev/nvme0n1p1              /boot              vfat    defaults,noatime,nofail                               0      2
+/dev/nvme0n1p2              /                  btrfs   rw,relatime,compress=zstd:1,space_cache=v2,subvol=@  0      0
+/dev/nvme0n1p3              /backup            btrfs   rw,relatime,compress=zstd:1,space_cache=v2            0      2
+/dev/nvme0n1p4              /var/lib/docker    btrfs   rw,relatime,compress=zstd:1,space_cache=v2            0      2
+/dev/nvme0n1p5              /downloads         btrfs   rw,relatime,compress=zstd:1,space_cache=v2            0      2
+
+# DISK 2: Permanent Storage + Docker Data (NVME 2 - 1TB, 100GB free for Btrfs - PRODUCTION OPTIMIZED)
+/dev/nvme1n1p1              /home              btrfs   rw,relatime,compress=zstd:1,space_cache=v2,subvol=@home           0      2
+/dev/nvme1n1p2              /workspace         btrfs   rw,relatime,compress=zstd:1,space_cache=v2,subvol=@workspace      0      2
+/dev/nvme1n1p3              /obsidian          btrfs   rw,relatime,compress=zstd:1,space_cache=v2,subvol=@obsidian       0      2
+/dev/nvme1n1p4              /docker-data       btrfs   rw,relatime,compress=zstd:1,space_cache=v2,subvol=@docker-data   0      2
+
+# Swapfile (32GB - for hibernation and memory overflow)
+/swapfile                    none               swap    defaults,pri=-2                                       0      0
+
+# Temporary filesystems
+tmpfs                        /tmp               tmpfs   defaults,noatime,mode=1777                            0      0
+tmpfs                        /var/tmp           tmpfs   defaults,noatime,mode=1777                            0      0
+tmpfs                        /run               tmpfs   defaults,noatime,nosuid,nodev,mode=755               0      0
+tmpfs                        /dev/shm           tmpfs   defaults,noatime,nosuid,nodev                         0      0
