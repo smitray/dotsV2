@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""
+Minimal OpenAI-compatible Whisper Server
+Auto-exits after idle timeout to free VRAM for other ML tasks
+"""
+
+import os
+import sys
+import time
+import asyncio
+import threading
+import tempfile
+import signal
+from typing import Optional
+
+import uvicorn
+from fastapi import FastAPI, File, UploadFile, Form
+from fastapi.responses import PlainTextResponse
+from faster_whisper import WhisperModel
+
+# Configuration
+PORT = int(os.environ.get("WHISPER_PORT", 7861))
+MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")
+IDLE_TIMEOUT = int(os.environ.get("WHISPER_IDLE_TIMEOUT", 300))  # 5 minutes
+
+# Device selection: env override > CUDA availability > CPU
+def get_device():
+    env_device = os.environ.get("WHISPER_DEVICE")
+    if env_device:
+        return env_device
+    if os.path.exists("/proc/driver/nvidia"):
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5
+            )
+            free_mem = int(result.stdout.strip().split('\n')[0])
+            if free_mem > 600:
+                return "cuda"
+        except Exception:
+            pass
+    return "cpu"
+
+DEVICE = get_device()
+COMPUTE_TYPE = "float16" if DEVICE == "cuda" else "int8"
+
+app = FastAPI(title="Whisper STT API")
+model = None
+last_used = time.time()
+stop_event = threading.Event()
+
+def load_model():
+    global model, last_used
+    if model is None:
+        print(f"[{time.strftime('%H:%M:%S')}] Loading {MODEL_SIZE} on {DEVICE} ({COMPUTE_TYPE})...")
+        model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+        print(f"[{time.strftime('%H:%M:%S')}] Model ready")
+    last_used = time.time()
+    return model
+
+def idle_monitor():
+    """Shutdown server if idle to free VRAM"""
+    global last_used
+    while not stop_event.is_set():
+        stop_event.wait(60)  # Wait 60 seconds or until shutdown signal
+        if stop_event.is_set():
+            break
+        if time.time() - last_used > IDLE_TIMEOUT:
+            print(f"[{time.strftime('%H:%M:%S')}] Idle timeout ({IDLE_TIMEOUT}s) reached. Shutting down.")
+            # Signal uvicorn to shutdown gracefully
+            os.kill(os.getpid(), signal.SIGTERM)
+            break
+
+@app.on_event("startup")
+async def startup_event():
+    threading.Thread(target=idle_monitor, daemon=True).start()
+    load_model()
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    """Cleanup on shutdown"""
+    global model
+    print(f"[{time.strftime('%H:%M:%S')}] Shutting down server...")
+    stop_event.set()
+    # Release model to free VRAM
+    model = None
+
+@app.post("/v1/audio/transcriptions")
+async def transcribe(
+    file: UploadFile = File(...),
+    model: str = Form("small"),
+    language: Optional[str] = Form(None),
+    response_format: str = Form("text")
+):
+    global last_used
+    whisper = load_model()
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+    
+    try:
+        segments, info = whisper.transcribe(
+            tmp_path,
+            language=language or "en",
+            condition_on_previous_text=True,
+            vad_filter=False
+        )
+        
+        text = " ".join([segment.text for segment in segments]).strip()
+        last_used = time.time()
+        
+        if response_format == "text":
+            return PlainTextResponse(content=text)
+        return {"text": text}
+    finally:
+        os.unlink(tmp_path)
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "model": MODEL_SIZE,
+        "device": DEVICE,
+        "compute_type": COMPUTE_TYPE
+    }
+
+@app.get("/")
+def root():
+    return {"message": "Whisper STT API", "docs": "/docs"}
+
+if __name__ == "__main__":
+    print(f"Starting Whisper API on port {PORT}")
+    print(f"Model: {MODEL_SIZE}, Device: {DEVICE}, Compute: {COMPUTE_TYPE}")
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

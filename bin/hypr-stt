@@ -1,0 +1,452 @@
+#!/bin/bash
+#
+# hypr-stt - Hyprland Speech-to-Text Client
+# Toggle recording with Super+R, transcribes via local Whisper API
+#
+
+set -euo pipefail
+
+# Source environment configuration if available
+ENV_FILE="$HOME/.config/hypr-stt/env"
+if [[ -f "$ENV_FILE" ]]; then
+    source "$ENV_FILE"
+fi
+
+# Configuration (use env variables set by source or direct setting)
+API_URL="${HYPR_STT_API_URL:-http://localhost:7861/v1/audio/transcriptions}"
+MODEL="${HYPR_STT_MODEL:-small}"
+PORT="${HYPR_STT_PORT:-7861}"
+LANGUAGE="${HYPR_STT_LANGUAGE:-en}"
+
+# Runtime paths (use /run/user/$UID/ for security)
+RUN_DIR="/run/user/$(id -u)"
+mkdir -p "$RUN_DIR" 2>/dev/null || RUN_DIR="/tmp"
+
+STATE_FILE="$RUN_DIR/hypr-stt-state"
+AUDIO_FILE="$RUN_DIR/hypr-stt-recording.wav"
+PID_FILE="$RUN_DIR/hypr-stt-pid"
+SERVER_PID_FILE="$RUN_DIR/whisper-api-server.pid"
+SERVER_LOG="$RUN_DIR/whisper-server.log"
+
+# Secure file permissions
+umask 077
+
+# Cleanup trap - remove artifacts on exit
+cleanup() {
+    rm -f "$PID_FILE" "$SERVER_PID_FILE" "$SERVER_LOG" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# Cleanup old artifacts on startup (in case of previous crash)
+cleanup_old_artifacts() {
+    # Remove stale PID files (process not running)
+    local pid
+    if [[ -f "$PID_FILE" ]]; then
+        pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
+        if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$PID_FILE"
+        fi
+    fi
+    if [[ -f "$SERVER_PID_FILE" ]]; then
+        pid=$(cat "$SERVER_PID_FILE" 2>/dev/null || echo "")
+        if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$SERVER_PID_FILE" "$SERVER_LOG"
+        fi
+    fi
+}
+
+# Initialize state file atomically
+init_state() {
+    if [[ ! -f "$STATE_FILE" ]]; then
+        echo "idle" > "$STATE_FILE" 2>/dev/null || true
+        chmod 600 "$STATE_FILE" 2>/dev/null || true
+    fi
+}
+
+get_state() {
+    cat "$STATE_FILE" 2>/dev/null || echo "idle"
+}
+
+set_state() {
+    # Atomic write: write to temp file, then move
+    local tmp_state
+    tmp_state=$(mktemp)
+    echo "$1" > "$tmp_state"
+    mv "$tmp_state" "$STATE_FILE" 2>/dev/null || true
+    chmod 600 "$STATE_FILE" 2>/dev/null || true
+    
+    # Signal waybar to update (RTMIN+8 = signal 42)
+    pkill -RTMIN+8 waybar 2>/dev/null || true
+}
+
+# Notification helper using notify-send
+# Uses app-name/urgency grouping to avoid notification spam in dunst
+notify() {
+    local icon="$1"
+    local msg="$2"
+    local urgency="${3:-normal}"
+    
+    if command -v notify-send &>/dev/null; then
+        # Use app-name for grouping (dunst replaces same app + urgency)
+        # This avoids the -p flag compatibility issue with older dunst
+        notify-send -u "$urgency" -i "$icon" -a "hypr-stt-$urgency" "hypr-stt" "$msg" 2>/dev/null || true
+    fi
+}
+
+# Check if GPU has enough free VRAM (>600MB)
+check_gpu_available() {
+    if ! command -v nvidia-smi &>/dev/null; then
+        return 1
+    fi
+    local free_mem
+    free_mem=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1)
+    [[ -n "$free_mem" && "$free_mem" -gt 600 ]]
+}
+
+# Check if API server is running and healthy
+server_healthy() {
+    curl -sf "http://localhost:$PORT/health" >/dev/null 2>&1
+}
+
+# Start API server on demand
+start_server() {
+    if server_healthy; then
+        return 0
+    fi
+    
+    notify "system-run" "Starting Whisper server..." "low"
+    
+    # Determine device based on VRAM availability
+    if check_gpu_available; then
+        export WHISPER_DEVICE="cuda"
+    else
+        export WHISPER_DEVICE="cpu"
+        notify "dialog-warning" "GPU busy, using CPU (slower)" "normal"
+    fi
+    
+    # Find the server script
+    local server_script
+    for path in \
+        "${HYPR_STT_SERVER:-}" \
+        "$HOME/.local/bin/whisper-api-server" \
+        "$(dirname "$(readlink -f "$0")")/whisper-api-server"; do
+        if [[ -n "$path" && -x "$path" ]]; then
+            server_script="$path"
+            break
+        fi
+    done
+    
+    if [[ -z "${server_script:-}" ]]; then
+        notify "dialog-error" "Server script not found" "critical"
+        return 1
+    fi
+    
+    # Start server in background with environment variables
+    WHISPER_PORT="${WHISPER_PORT:-7861}" \
+    WHISPER_MODEL="${WHISPER_MODEL:-small}" \
+    WHISPER_IDLE_TIMEOUT="${WHISPER_IDLE_TIMEOUT:-300}" \
+    WHISPER_DEVICE="${WHISPER_DEVICE:-}" \
+    "$server_script" > "$SERVER_LOG" 2>&1 &
+    local pid=$!
+    # Atomic PID write
+    echo "$pid" > "$SERVER_PID_FILE" 2>/dev/null || true
+    chmod 600 "$SERVER_PID_FILE" 2>/dev/null || true
+    
+    # Wait for server to be ready (max 30s for model download on first run)
+    local max_wait=30
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        sleep 1
+        ((waited++))
+        if server_healthy; then
+            notify "emblem-ok" "Server ready" "low"
+            return 0
+        fi
+        # Check if process died
+        if ! kill -0 "$pid" 2>/dev/null; then
+            notify "dialog-error" "Server crashed. Check $SERVER_LOG" "critical"
+            return 1
+        fi
+    done
+    
+    notify "dialog-error" "Server timeout" "critical"
+    return 1
+}
+
+# Get preferred audio source (Bluetooth headset > default)
+get_preferred_mic() {
+    local source
+    
+    # Check for Sony WH-1000XM5 or other Bluetooth headset
+    source=$(pactl list sources short 2>/dev/null | grep -iE "bluez.*input|wh-1000xm5" | awk '{print $2}' | head -1)
+    
+    if [[ -n "$source" ]]; then
+        echo "$source"
+    else
+        pactl get-default-source 2>/dev/null || echo "@DEFAULT_SOURCE@"
+    fi
+}
+
+# Start recording
+start_recording() {
+    # Ensure server is running
+    if ! start_server; then
+        set_state "idle"
+        return 1
+    fi
+    
+    set_state "recording"
+    notify "audio-input-microphone" "Recording... (press again to stop)" "normal"
+    
+    local mic
+    mic=$(get_preferred_mic)
+    
+    # Start pw-record in background
+    pw-record --target="$mic" --rate=16000 --channels=1 --format=s16 "$AUDIO_FILE" &
+    local pid=$!
+    echo "$pid" > "$PID_FILE" 2>/dev/null || true
+    chmod 600 "$PID_FILE" 2>/dev/null || true
+}
+
+# Stop recording and transcribe
+stop_recording() {
+    local pid
+    pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
+    
+    if [[ -n "$pid" ]]; then
+        kill "$pid" 2>/dev/null || true
+        # Wait for process to fully terminate and flush audio
+        wait "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+    
+    set_state "processing"
+    notify "emblem-synchronizing" "Processing..." "normal"
+    
+    # Ensure audio file exists and has content
+    sleep 0.5
+    # Wait for file to be written
+    local timeout=10
+    while [[ ! -f "$AUDIO_FILE" ]] && [[ $timeout -gt 0 ]]; do
+        sleep 0.1
+        ((timeout--))
+    done
+    
+    if [[ ! -f "$AUDIO_FILE" || ! -s "$AUDIO_FILE" ]]; then
+        notify "dialog-error" "No audio recorded" "critical"
+        set_state "idle"
+        return 1
+    fi
+    
+    # Secure audio file before use
+    chmod 600 "$AUDIO_FILE" 2>/dev/null || true
+    
+    # API call
+    local response http_code body
+    response=$(curl -s -w "\n%{http_code}" \
+        --max-time 60 \
+        -X POST "$API_URL" \
+        -F "file=@$AUDIO_FILE;type=audio/wav" \
+        -F "model=$MODEL" \
+        -F "language=$LANGUAGE" \
+        -F "response_format=text" 2>/dev/null) || true
+    
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    
+    # Cleanup audio file
+    rm -f "$AUDIO_FILE"
+    
+    if [[ "$http_code" == "200" && -n "$body" && "$body" != "null" ]]; then
+        # Capitalize first letter
+        local text
+        text=$(echo "$body" | sed 's/^./\U&/')
+        
+        # Type the text
+        type_text "$text"
+        
+        # Show truncated notification
+        local display_text="${text:0:50}"
+        [[ ${#text} -gt 50 ]] && display_text="${display_text}..."
+        notify "emblem-ok" "Typed: $display_text" "normal"
+    else
+        notify "dialog-error" "Transcription failed (HTTP ${http_code:-error})" "critical"
+        echo "[hypr-stt] Error - HTTP $http_code: $body" >&2
+    fi
+    
+    set_state "idle"
+}
+
+# Type text with fallback chain
+type_text() {
+    local text="$1"
+    
+    # Primary: wtype (Wayland native)
+    if command -v wtype &>/dev/null; then
+        if wtype -- "$text" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    
+    # Fallback: ydotool (works with XWayland apps)
+    if command -v ydotool &>/dev/null; then
+        if ydotool type -- "$text" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    
+    # Ultimate fallback: clipboard
+    if command -v wl-copy &>/dev/null; then
+        echo -n "$text" | wl-copy
+        notify "edit-paste" "Copied to clipboard (Ctrl+V to paste)" "normal"
+        return 0
+    fi
+    
+    notify "dialog-error" "No typing method available" "critical"
+    return 0
+}
+
+# Main toggle logic
+toggle() {
+    cleanup_old_artifacts
+    init_state
+    
+    case "$(get_state)" in
+        "idle")
+            start_recording
+            ;;
+        "recording")
+            stop_recording
+            ;;
+        "processing")
+            notify "dialog-information" "Still processing, please wait..." "low"
+            ;;
+        *)
+            set_state "idle"
+            toggle
+            ;;
+    esac
+}
+
+# Status for waybar
+status() {
+    cleanup_old_artifacts
+    init_state
+    local state
+    state=$(get_state)
+    
+    case "$state" in
+        "recording")
+            echo '{"text":"REC","class":"recording","tooltip":"Recording... Click to stop"}'
+            ;;
+        "processing")
+            echo '{"text":"...","class":"processing","tooltip":"Processing audio..."}'
+            ;;
+        *)
+            echo '{"text":"","class":"idle","tooltip":"STT Ready (Super+R)"}'
+            ;;
+    esac
+}
+
+# Stop server manually
+stop_server() {
+    local pid
+    pid=$(cat "$SERVER_PID_FILE" 2>/dev/null || echo "")
+    if [[ -n "$pid" ]]; then
+        kill "$pid" 2>/dev/null || true
+        # Wait for graceful shutdown
+        local timeout=5
+        while kill -0 "$pid" 2>/dev/null && [[ $timeout -gt 0 ]]; do
+            sleep 0.2
+            ((timeout--))
+        done
+        # Force kill if still running
+        kill -9 "$pid" 2>/dev/null || true
+        rm -f "$SERVER_PID_FILE"
+        rm -f "$SERVER_LOG"
+        notify "emblem-ok" "Server stopped" "low"
+    else
+        notify "dialog-information" "Server not running" "low"
+    fi
+}
+
+# Reset everything to clean state
+reset() {
+    cleanup_old_artifacts
+    
+    local current_state
+    current_state=$(get_state)
+    
+    if [[ "$current_state" == "recording" ]]; then
+        local pid
+        pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
+        if [[ -n "$pid" ]]; then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    fi
+    
+    # Clean up all runtime files
+    rm -f "$STATE_FILE" "$PID_FILE" "$SERVER_PID_FILE" "$SERVER_LOG" "$AUDIO_FILE" 2>/dev/null || true
+    
+    # Force-kill server if still running
+    local server_pid
+    server_pid=$(pgrep -f "whisper-api-server" || echo "")
+    if [[ -n "$server_pid" ]]; then
+        kill "$server_pid" 2>/dev/null || true
+        kill -9 "$server_pid" 2>/dev/null || true
+    fi
+    
+    # Reinitialize state as idle
+    init_state
+    
+    notify "emblem-ok" "STT reset to idle" "normal"
+}
+
+# Show help
+show_help() {
+    cat <<EOF
+hypr-stt - Hyprland Speech-to-Text
+
+Usage: hypr-stt [command]
+
+Commands:
+    toggle      Start/stop recording (default)
+    status      JSON status for waybar
+    reset       Reset everything to clean state (stop recording, server, cleanup)
+    stop-server Stop the API server
+    help        Show this help
+
+Environment variables:
+    HYPR_STT_API_URL    API endpoint (default: http://localhost:7861/v1/audio/transcriptions)
+    HYPR_STT_MODEL      Whisper model (default: small)
+    HYPR_STT_PORT       API port (default: 7861)
+    HYPR_STT_LANGUAGE   Language code (default: en)
+    HYPR_STT_SERVER     Path to server script
+
+EOF
+}
+
+# Entry point
+case "${1:-toggle}" in
+    toggle)
+        toggle
+        ;;
+    status)
+        status
+        ;;
+    reset)
+        reset
+        ;;
+    stop-server)
+        stop_server
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    *)
+        echo "Unknown command: $1" >&2
+        show_help
+        exit 1
+        ;;
+esac

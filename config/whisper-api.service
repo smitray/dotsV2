@@ -1,0 +1,26 @@
+[Unit]
+Description=Whisper STT API Server
+Documentation=https://github.com/SYSTRAN/faster-whisper
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/whisper-api-server
+Restart=on-failure
+RestartSec=10
+
+# Environment configuration
+# CUDA 12 compatibility layer for systems with CUDA 13+
+Environment="LD_LIBRARY_PATH=%h/.local/lib/cuda-compat:/opt/cuda/lib64"
+Environment="WHISPER_DEVICE=cuda"
+# Uncomment to customize:
+# Environment="WHISPER_PORT=7861"
+# Environment="WHISPER_MODEL=small"
+# Environment="WHISPER_IDLE_TIMEOUT=300"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

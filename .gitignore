@@ -1,0 +1,19 @@
+# Editor lock files
+.~lock.*
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+Text File.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Mise/asdf
+.mise.toml
+.tool-versions
