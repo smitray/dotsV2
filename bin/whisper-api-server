@@ -51,10 +51,19 @@ last_used = time.time()
 stop_event = threading.Event()
 
 def load_model():
-    global model, last_used
+    global model, last_used, DEVICE, COMPUTE_TYPE
     if model is None:
         print(f"[{time.strftime('%H:%M:%S')}] Loading {MODEL_SIZE} on {DEVICE} ({COMPUTE_TYPE})...")
-        model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+        try:
+            model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+        except RuntimeError as e:
+            if "cuda" in DEVICE.lower() and ("libcublas" in str(e) or "CUDA" in str(e)):
+                print(f"[{time.strftime('%H:%M:%S')}] CUDA failed ({e}), falling back to CPU...")
+                DEVICE = "cpu"
+                COMPUTE_TYPE = "int8"
+                model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+            else:
+                raise
         print(f"[{time.strftime('%H:%M:%S')}] Model ready")
     last_used = time.time()
     return model
