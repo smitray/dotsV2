@@ -39,11 +39,43 @@ This document defines the finalized dual-NVMe storage architecture for the Arch 
 All Btrfs partitions are mounted with the following optimized options:
 - `compress=zstd:1` for a balance of speed and storage.
 - `relatime,space_cache=v2` for performance.
-- `/srv` is configured as the `graphroot` for rootless Podman.
+
+### 🗺 Full Mount Hierarchy
+| Mount Point | Partition | Drive | Filesystem |
+| :--- | :--- | :--- | :--- |
+| `/` | `p3` | NVMe 0 | Btrfs |
+| `/boot` | `p1` | NVMe 0 | FAT32 |
+| `/backup` | `p4` | NVMe 0 | Btrfs |
+| `/downloads`| `p5` | NVMe 0 | Btrfs |
+| `/home` | `p1` | NVMe 1 | Btrfs |
+| `/workspace`| `p2` | NVMe 1 | Btrfs |
+| `/obsidian` | `p3` | NVMe 1 | Btrfs |
+| `/srv` | `p4` | NVMe 1 | Btrfs |
+
+---
+
+## 📂 Service Directory Structure (`/srv`)
+The `/srv` partition handles all persistent data for rootless Podman services.
+
+```text
+/srv/
+├── containers/               # Podman graphroot (images, layers)
+├── ollama/
+│   └── models/               # LLM model weights
+├── databases/
+│   ├── postgres/             # PostgreSQL data volumes
+│   ├── mongo/                # MongoDB data volumes
+│   ├── qdrant/               # Vector database storage
+│   └── valkey/               # Caching layer data
+├── n8n/
+│   └── data/                 # Workflow & encryption data
+└── openwebui/
+    └── app/                  # Frontend user uploads & DB
+```
 
 ---
 
 ## 🚀 Impact on Workflow
-1.  **Mise Runtimes**: Stored in `/home/.local/share/mise/` (NVMe 2), making them persistent across OS wipes.
-2.  **Services**: All container data (PostgreSQL, MongoDB, Ollama models) resides in `/srv/` (NVMe 2).
-3.  **OS Wipe**: You can format NVMe 0 (p3) at any time to get a fresh Arch install; just remount NVMe 2 to restore your entire work environment instantly.
+1.  **Mise Runtimes**: Stored in `/home/.local/share/mise/` (NVMe 1), making them persistent across OS wipes.
+2.  **Services**: All container data (PostgreSQL, MongoDB, Ollama models) resides in `/srv/` (NVMe 1).
+3.  **OS Wipe**: You can format NVMe 0 (p3) at any time to get a fresh Arch install; just remount NVMe 1 to restore your entire work environment instantly.
