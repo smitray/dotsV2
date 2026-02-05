@@ -1,0 +1,69 @@
+---
+title: Multi-GPU
+url: https://wiki.hypr.land/Configuring/Multi-GPU/
+source: sitemap
+fetched_at: 2026-02-01T09:23:19.786012486-03:00
+rendered_js: false
+word_count: 562
+summary: This document explains how to configure Hyprland to use specific GPUs for rendering and hardware acceleration when multiple graphics devices are present, including detecting GPUs and setting environment variables.
+tags:
+    - gpu-configuration
+    - hyprland
+    - multi-gpu
+    - drm-devices
+    - udev-rules
+    - graphics-setup
+category: guide
+---
+
+## General[](#general)
+
+If your host machine uses multiple GPUs, you may want to use one GPU for rendering all the elements for Hyprland including windows, animations, and another for hardware acceleration for certain applications, etc.
+
+This setup is very common in the likes of gaming laptops, GPU-passthrough (without VFIO) capable hosts, and if you have multiple GPUs in general.
+
+## Detecting GPUs[](#detecting-gpus)
+
+For this case, the writer is taking the example of their laptop.
+
+Upon running `lspci -d ::03xx`, one can list all the PCI display controllers available.
+
+Here it is clear that 2 GPUs are available, the dedicated NVIDIA GTX 1650 Mobile / Max-Q and the integrated AMD Cezanne Radeon Vega Series GPU.
+
+Now, run `ls -l /dev/dri/by-path`
+
+So from the above outputs, we can see that the path for the AMD card is `pci-0000:06:00.0-card`, due to the matching `06:00.0` from the first command. Do not use the `card1` symlink indicated here. It is dynamically assigned at boot and is subject to frequent change, making it unsuitable as a marker for GPU selection.
+
+## Telling Hyprland which GPU to use[](#telling-hyprland-which-gpu-to-use)
+
+After determining which “card” belongs to which GPU, we can now tell Hyprland which GPUs to use by setting the `AQ_DRM_DEVICES` environment variable.
+
+Note
+
+It is generally a good idea for laptops to use the integrated GPU as the primary renderer as this preserves battery life and is practically indistinguishable from using the dedicated GPU on modern systems in most cases. Hyprland can be run on integrated GPUs just fine. The same principle applies for desktop setups with lower and higher power rating GPUs respectively.
+
+If you would like to use another GPU, or the wrong GPU is picked by default, set `AQ_DRM_DEVICES` to a `:`-separated list of card paths, e.g.
+
+Here, we tell Hyprland which GPUs it’s allowed to use, in order of priority. For example, `card0` will be the primary renderer, but if it isn’t available for whatever reason, then `card1` is primary.
+
+Do note that if you have an external monitor connected to, for example `card1`, that card must be included in `AQ_DRM_DEVICES` for the monitor to work, though it doesn’t have to be the primary renderer.
+
+You should now be able to use an integrated GPU for lighter GPU loads, including Hyprland, or default to your dGPU if you prefer.
+
+Note
+
+[uwsm](https://wiki.hypr.land/Useful-Utilities/Systemd-start) users are advised to export the `AQ_DRM_DEVICES` variable inside `~/.config/uwsm/env-hyprland`, instead. This method ensures that the variable is properly exported to the systemd environment without conflicting with other compositors or desktop environments.
+
+## Creating consistent device paths for specific cards[](#creating-consistent-device-paths-for-specific-cards)
+
+As mentioned above, it’s not recommended to use the `/dev/dri/card*` device paths since they periodically change which device they are symlinked to. Furthermore, the colons in the actual card device paths are not usable in the `AQ_DRM_DEVICES` environment variable since colons `:` are used as a separator for multiple paths.
+
+It’s possible to use udev rules to create reliable symlinks to particular device cards. For example, to create a symlink to an AMD card at the path `/dev/dri/amd-igpu`, we can create a udev rule at `/etc/udev/rules.d/amd-igpu-dev-path.rules` programmatically like so:
+
+Then reloading the udev rules with:
+
+There should now be a symlink at `/dev/dri/amd-igpu` that points to your respective card file:
+
+This symlink will automatically update to point to correct card file if it ever changes.
+
+Now it is possible to use the new symlink in the `AQ_DRM_DEVICES` environment variable:

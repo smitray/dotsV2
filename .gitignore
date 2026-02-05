@@ -17,3 +17,6 @@ venv/
 # Mise/asdf
 .mise.toml
 .tool-versions
+
+# Secrets
+.env
