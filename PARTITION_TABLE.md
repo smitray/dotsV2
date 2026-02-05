@@ -75,7 +75,33 @@ The `/srv` partition handles all persistent data for rootless Podman services.
 
 ---
 
-## 🚀 Impact on Workflow
+## � Reference `/etc/fstab`
+Use this template for static filesystem identification. Note: It is recommended to use `UUID` or `PARTUUID` in your actual file.
+
+```fstab
+# <file system> <mount point> <type> <options> <dump> <pass>
+
+# NVMe 0 - System Disk
+/dev/nvme0n1p1  /boot       vfat    defaults,noatime,nofail                   0 2
+/dev/nvme0n1p2  none        swap    defaults,pri=-2                           0 0
+/dev/nvme0n1p3  /           btrfs   rw,relatime,compress=zstd:1,space_cache=v2 0 0
+/dev/nvme0n1p4  /backup     btrfs   rw,relatime,compress=zstd:1,space_cache=v2 0 2
+/dev/nvme0n1p5  /downloads  btrfs   rw,relatime,compress=zstd:1,space_cache=v2 0 2
+
+# NVMe 1 - Services + User Data
+/dev/nvme1n1p1  /home       btrfs   rw,relatime,compress=zstd:1,space_cache=v2 0 2
+/dev/nvme1n1p2  /workspace  btrfs   rw,relatime,compress=zstd:1,space_cache=v2 0 2
+/dev/nvme1n1p3  /obsidian   btrfs   rw,relatime,compress=zstd:1,space_cache=v2 0 2
+/dev/nvme1n1p4  /srv        btrfs   rw,relatime,compress=zstd:1,space_cache=v2 0 2
+
+# RAM-based filesystems (tmpfs)
+tmpfs           /tmp        tmpfs   defaults,noatime,mode=1777                0 0
+tmpfs           /run        tmpfs   defaults,noatime,nosuid,nodev,mode=755     0 0
+```
+
+---
+
+## �🚀 Impact on Workflow
 1.  **Mise Runtimes**: Stored in `/home/.local/share/mise/` (NVMe 1), making them persistent across OS wipes.
 2.  **Services**: All container data (PostgreSQL, MongoDB, Ollama models) resides in `/srv/` (NVMe 1).
 3.  **OS Wipe**: You can format NVMe 0 (p3) at any time to get a fresh Arch install; just remount NVMe 1 to restore your entire work environment instantly.
