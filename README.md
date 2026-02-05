@@ -7,7 +7,8 @@ A production-ready Arch Linux configuration and installation repository, optimiz
 If you are setting up a new system:
 
 1.  **Hardware Specs**: Check [SYSTEM_SPECS.md](file:///home/debasmitr/workspace/dotFileV2/SYSTEM_SPECS.md) to ensure compatibility.
-2.  **Installation Spec**: Read the [ARCH_INSTALL_FINAL_SPEC.md](file:///home/debasmitr/workspace/dotFileV2/ARCH_INSTALL_FINAL_SPEC.md) for the master storage architecture and partition table.
+2.  **Partition Table**: See the [PARTITION_TABLE.md](file:///home/debasmitr/workspace/dotFileV2/PARTITION_TABLE.md) for the exact layout.
+3.  **Installation Spec**: Read the [ARCH_INSTALL_FINAL_SPEC.md](file:///home/debasmitr/workspace/dotFileV2/ARCH_INSTALL_FINAL_SPEC.md) for the full installation guide.
 3.  **Automated Setup**:
     - Boot Arch ISO.
     - Run `bash install/setup_disks.sh`.
