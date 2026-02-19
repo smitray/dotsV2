@@ -27,21 +27,24 @@ success() { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# Get the correct Python command to use
-# Prefers mise's project-specific Python if available
-get_python_cmd() {
-    if command -v mise &>/dev/null; then
-        local mise_python
-        mise_python=$(mise which python 2>/dev/null || true)
-        if [[ -n "$mise_python" && -x "$mise_python" ]]; then
-            echo "$mise_python"
-            return 0
-        fi
-    fi
-    echo python3
-}
+# Use system Python 3
+PYTHON_CMD="python3"
 
-PYTHON_CMD=$(get_python_cmd)
+# Create local .env from .env.example if it doesn't exist
+# This allows users to customize .env without tracking it in git
+init_local_env() {
+    local env_example="$SCRIPT_DIR/.env.example"
+    local env_file="$SCRIPT_DIR/.env"
+
+    if [[ -f "$env_example" ]]; then
+        if [[ ! -f "$env_file" ]]; then
+            cp "$env_example" "$env_file"
+            info "Created local .env from .env.example"
+        fi
+    else
+        warn ".env.example not found at $env_example"
+    fi
+}
 
 # Check if running on Arch Linux
 check_distro() {
@@ -680,7 +683,10 @@ main() {
     echo -e "${BLUE}║   Whisper STT Installer for Hyprland   ║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
     echo ""
-    
+
+    # Initialize local .env from .env.example
+    init_local_env
+
     case "${1:-install}" in
         install)
             check_distro

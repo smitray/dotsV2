@@ -10,13 +10,18 @@ Restart=on-failure
 RestartSec=10
 
 # Environment configuration
-# CUDA 12 compatibility layer for systems with CUDA 13+
+# CUDA compatibility layer for systems with CUDA 13+
 Environment="LD_LIBRARY_PATH=%h/.local/lib/cuda-compat:/opt/cuda/lib64"
 Environment="WHISPER_DEVICE=cuda"
-# Uncomment to customize:
-# Environment="WHISPER_PORT=7861"
-# Environment="WHISPER_MODEL=small"
-# Environment="WHISPER_IDLE_TIMEOUT=300"
+
+# Preload CUDA library to avoid cublas loading issues
+Environment="LD_PRELOAD=/opt/cuda/lib64/libcublas.so.13"
+
+# Server runs continuously - no auto-shutdown
+# To free VRAM for other ML workloads, use:
+#   ~/.local/bin/hypr-stt stop-server
+# To restart after loading other models:
+#   ~/.local/bin/hypr-stt start-server
 
 # Logging
 StandardOutput=journal
