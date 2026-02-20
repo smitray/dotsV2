@@ -1,3 +1,20 @@
+#!/bin/bash
+#
+# Generate and install whisper-api.service for current user
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+USER_HOME="$HOME"
+USER_ID="$(id -u)"
+USER_NAME="$(whoami)"
+
+# Read template
+SERVICE_FILE="$SCRIPT_DIR/whisper-api.service.template"
+OUTPUT_FILE="$SCRIPT_DIR/whisper-api.service"
+
+cat > "$OUTPUT_FILE" << EOF
 [Unit]
 Description=Whisper STT API Server
 Documentation=https://github.com/SYSTRAN/faster-whisper
@@ -10,8 +27,8 @@ StartLimitIntervalSec=60
 
 [Service]
 Type=simple
-ExecStartPre=+/home/debasmitr/.config/systemd/user/whisper-cleanup.sh
-ExecStart=/home/debasmitr/.local/bin/whisper-api-server
+ExecStartPre=${USER_HOME}/.config/systemd/user/whisper-cleanup.sh
+ExecStart=${USER_HOME}/.local/bin/whisper-api-server
 Restart=on-failure
 RestartSec=10
 TimeoutStartSec=60
@@ -23,9 +40,16 @@ KillSignal=SIGTERM
 SendSIGKILL=yes
 FinalKillSignal=SIGKILL
 
+# Prevent multiple instances
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=${USER_HOME}/.cache/huggingface /tmp /run/user/${USER_ID}
+
 # Environment configuration
 # CUDA compatibility layer for systems with CUDA 13+
-Environment="LD_LIBRARY_PATH=/home/debasmitr/.local/lib/cuda-compat:/opt/cuda/lib64"
+Environment="LD_LIBRARY_PATH=${USER_HOME}/.local/lib/cuda-compat:/opt/cuda/lib64"
 Environment="WHISPER_DEVICE=cuda"
 
 # Preload CUDA library to avoid cublas loading issues
@@ -43,3 +67,8 @@ StandardError=journal
 
 [Install]
 WantedBy=default.target
+EOF
+
+echo "Generated service file: $OUTPUT_FILE"
+echo "User: $USER_NAME (UID: $USER_ID)"
+echo "Home: $USER_HOME"

@@ -202,6 +202,7 @@ install_python_packages() {
         "uvicorn"
         "fastapi"
         "python-multipart"
+        "httpx"
     )
     
     local missing=()
@@ -254,12 +255,16 @@ install_scripts() {
 # Install systemd service
 install_systemd_service() {
     info "Installing systemd user service..."
-    
+
     mkdir -p "$SYSTEMD_DIR"
     cp "$SCRIPT_DIR/config/whisper-api.service" "$SYSTEMD_DIR/"
     
+    # Install cleanup script (prevents port conflicts on reboot)
+    cp "$SCRIPT_DIR/config/whisper-cleanup.sh" "$SYSTEMD_DIR/"
+    chmod +x "$SYSTEMD_DIR/whisper-cleanup.sh"
+
     systemctl --user daemon-reload
-    
+
     success "Systemd service installed"
     info "To enable auto-start: systemctl --user enable whisper-api"
     info "To start now: systemctl --user start whisper-api"
@@ -599,15 +604,16 @@ verify_installation() {
 # Uninstall function
 uninstall() {
     info "Uninstalling Whisper STT..."
-    
+
     # Stop and disable service
     systemctl --user stop whisper-api.service &>/dev/null || true
     systemctl --user disable whisper-api.service &>/dev/null || true
-    
+
     # Remove files
     rm -f "$BIN_DIR/whisper-api-server"
     rm -f "$BIN_DIR/hypr-stt"
     rm -f "$SYSTEMD_DIR/whisper-api.service"
+    rm -f "$SYSTEMD_DIR/whisper-cleanup.sh"
     
     # Cleanup runtime files (both old /tmp location and new /run/user/$UID/ location)
     rm -f /tmp/hypr-stt-* /tmp/whisper-*
