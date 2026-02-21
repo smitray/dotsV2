@@ -140,8 +140,12 @@ notify() {
 # Server Management
 # =============================================================================
 
+server_ready() {
+    curl -sf "http://localhost:$PORT/ready" >/dev/null 2>&1
+}
+
 server_healthy() {
-    curl -sf "http://localhost:$PORT/health" >/dev/null 2>&1
+    server_ready
 }
 
 check_gpu_available() {
@@ -307,8 +311,10 @@ get_preferred_mic() {
 # =============================================================================
 
 start_recording() {
-    if ! start_server; then
-        set_state "idle"
+    # Check if server is ready before recording
+    if ! server_ready; then
+        notify "dialog-warning" "STT server not ready. Run: whisper-ctl start" "normal"
+        echo "Error: Server not ready. Run 'whisper-ctl start' first." >&2
         return 1
     fi
     
@@ -382,18 +388,31 @@ stop_recording() {
 
 transcribe_audio() {
     local response http_code body text
+    local max_retries=3
+    local retry_delay=2
+    local attempt
     
-    # Make API request
-    response=$(curl -s -w "\n%{http_code}" \
-        --max-time 120 \
-        -X POST "$API_URL" \
-        -F "file=@$AUDIO_FILE;type=audio/wav" \
-        -F "model=$MODEL" \
-        -F "language=$LANGUAGE" \
-        -F "response_format=text" 2>/dev/null) || true
-    
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    for attempt in $(seq 1 $max_retries); do
+        # Make API request
+        response=$(curl -s -w "\n%{http_code}" \
+            --max-time 120 \
+            -X POST "$API_URL" \
+            -F "file=@$AUDIO_FILE;type=audio/wav" \
+            -F "model=$MODEL" \
+            -F "language=$LANGUAGE" \
+            -F "response_format=text" 2>/dev/null) || true
+        
+        http_code=$(echo "$response" | tail -n1)
+        body=$(echo "$response" | sed '$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        if [[ "$http_code" == "200" ]]; then
+            break  # Success, exit retry loop
+        elif [[ "$http_code" == "500" ]] && [[ $attempt -lt $max_retries ]]; then
+            notify "dialog-warning" "Server error, retrying ($attempt/$max_retries)..." "low"
+            sleep $retry_delay
+            retry_delay=$((retry_delay * 2))  # Exponential backoff: 2, 4
+        fi
+    done
     
     # Cleanup audio file
     rm -f "$AUDIO_FILE" 2>/dev/null || true
@@ -509,13 +528,21 @@ cmd_status() {
     
     case "$state" in
         "recording")
-            echo '{"text":"REC","class":"recording","tooltip":"Recording... Click to stop"}'
+            echo '{"text":"🎤","class":"recording","tooltip":"Recording... Click to stop"}'
             ;;
         "processing")
-            echo '{"text":"...","class":"processing","tooltip":"Processing audio..."}'
+            echo '{"text":"⏳","class":"processing","tooltip":"Processing audio..."}'
             ;;
         *)
-            echo '{"text":"","class":"idle","tooltip":"STT Ready (Keybind: '"$KEYBIND"')"}'
+            # Check server status
+            if server_ready; then
+                local health device
+                health=$(curl -s "http://localhost:$PORT/health" 2>/dev/null || echo '{}')
+                device=$(echo "$health" | grep -o '"device":"[^"]*"' | cut -d'"' -f4 || echo "")
+                echo "{\"text\":\"\",\"class\":\"idle-ready\",\"tooltip\":\"STT Ready ($device) - $KEYBIND\"}"
+            else
+                echo '{"text":"⏳","class":"idle-loading","tooltip":"STT Loading... Use whisper-ctl start\"}'
+            fi
             ;;
     esac
 }
@@ -591,47 +618,46 @@ cmd_select_mic() {
 
 cmd_help() {
     cat <<EOF
-$SCRIPT_NAME v$VERSION - Hyprland Speech-to-Text
+$SCRIPT_NAME v$VERSION - Hyprland Speech-to-Text Client
 
 Usage: $SCRIPT_NAME <command>
 
 Commands:
   toggle        Start/stop recording (default)
   start         Start recording
-  stop          Stop recording and transcribe
+  stop          Stop and transcribe
   status        JSON status for Waybar
-  stop-server   Stop the Whisper API server (free VRAM)
-  start-server  Start the Whisper API server (load model on GPU)
-  restart-server Restart the Whisper API server
-  reset         Full reset (stop recording, server, cleanup)
   list-mics     List all available audio input devices
   select-mic    Select audio input device (interactive or by number)
   help          Show this help
+
+Server Management (use whisper-ctl):
+  whisper-ctl start         Start server, load model
+  whisper-ctl stop          Stop server, free VRAM
+  whisper-ctl restart       Restart server
+  whisper-ctl status        Show server status
+  whisper-ctl waybar       Waybar JSON output
 
 Environment Variables:
   HYPR_STT_API_URL      API endpoint URL
   HYPR_STT_MODEL        Whisper model (tiny/base/small/medium/large-v3)
   HYPR_STT_PORT         API server port
   HYPR_STT_LANGUAGE     Language code (en/es/fr/de/hi/zh/ja/ko)
-  HYPR_STT_SERVER       Path to whisper-api-server script
-  HYPR_STT_KEYBIND      Keybinding hint (default: SUPER+N)
 
 Examples:
   $SCRIPT_NAME toggle       # Toggle recording
   $SCRIPT_NAME list-mics    # Show available microphones
   $SCRIPT_NAME select-mic   # Interactively select mic
   $SCRIPT_NAME select-mic 2 # Select device #2
-  $SCRIPT_NAME stop-server  # Free VRAM before ML work
-  $SCRIPT_NAME start-server # Load model on GPU
-  $SCRIPT_NAME restart-server # Restart server
-  $SCRIPT_NAME reset        # Full reset
 
 Hyprland Keybindings (~/.config/hypr/hyprland.conf):
   bind = SUPER, N, exec, ~/.local/bin/hypr-stt toggle
-  bind = SUPER SHIFT, S, exec, ~/.local/bin/hypr-stt start-server
-  bind = SUPER SHIFT, R, exec, ~/.local/bin/hypr-stt restart-server
-  bind = SUPER ALT, R, exec, ~/.local/bin/hypr-stt stop-server
-  bind = SUPER CTRL, R, exec, ~/.local/bin/hypr-stt reset
+
+Server Management:
+  SUPER ALT + S    Stop server (free VRAM)
+  SUPER SHIFT + S  Start server
+  SUPER SHIFT + R  Restart server
+  SUPER + .        Show status
 
 Integration Guide:
   See README.md or https://github.com/yourusername/whisper-stt for
@@ -661,18 +687,6 @@ main() {
             ;;
         status)
             cmd_status
-            ;;
-        stop-server)
-            cmd_stop_server
-            ;;
-        start-server)
-            cmd_start_server
-            ;;
-        restart-server)
-            cmd_restart_server
-            ;;
-        reset)
-            cmd_reset
             ;;
         list-mics)
             cmd_list_mics

@@ -193,7 +193,7 @@ setup_cuda_compat() {
     fi
 }
 
-# Install Python packages
+# Install Python packages using uv (or pip as fallback)
 install_python_packages() {
     info "Checking Python packages..."
     
@@ -203,6 +203,8 @@ install_python_packages() {
         "fastapi"
         "python-multipart"
         "httpx"
+        "sdnotify"
+        "pyyaml"
     )
     
     local missing=()
@@ -221,7 +223,18 @@ install_python_packages() {
     
     if [[ ${#missing[@]} -gt 0 ]]; then
         info "Installing Python packages: ${missing[*]}"
-        $PYTHON_CMD -m pip install --user --upgrade "${missing[@]}"
+        
+        # Try uv first (user has mise which includes uv)
+        if command -v uv &>/dev/null; then
+            info "Using uv to install packages..."
+            uv pip install --user --system "${missing[@]}" 2>/dev/null || {
+                warn "uv failed, falling back to pip..."
+                $PYTHON_CMD -m pip install --user --upgrade "${missing[@]}"
+            }
+        else
+            # Fallback to pip
+            $PYTHON_CMD -m pip install --user --upgrade "${missing[@]}"
+        fi
         success "Python packages installed"
     else
         success "All Python packages already installed"
@@ -236,13 +249,22 @@ install_scripts() {
     
     # Copy scripts
     cp "$SCRIPT_DIR/bin/whisper-api-server" "$BIN_DIR/"
+    cp "$SCRIPT_DIR/bin/whisper-ctl" "$BIN_DIR/"
     cp "$SCRIPT_DIR/bin/hypr-stt" "$BIN_DIR/"
     
     # Make executable
     chmod +x "$BIN_DIR/whisper-api-server"
+    chmod +x "$BIN_DIR/whisper-ctl"
     chmod +x "$BIN_DIR/hypr-stt"
     
     success "Scripts installed to $BIN_DIR"
+    
+    # Install Python library
+    info "Installing Python library..."
+    local LIB_DIR="$HOME/.local/lib/whisper_api"
+    mkdir -p "$LIB_DIR"
+    cp -r "$SCRIPT_DIR/lib/whisper_api/"* "$LIB_DIR/"
+    success "Python library installed to $LIB_DIR"
     
     # Check if ~/.local/bin is in PATH
     if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -250,6 +272,29 @@ install_scripts() {
         warn "Add this to your shell config (~/.bashrc or ~/.zshrc):"
         echo '  export PATH="$HOME/.local/bin:$PATH"'
     fi
+}
+
+# Install configuration
+install_config() {
+    info "Installing configuration..."
+    
+    local whisper_config_dir="$CONFIG_DIR/whisper-api"
+    mkdir -p "$whisper_config_dir"
+    
+    # Copy config example
+    if [[ -f "$SCRIPT_DIR/config/config.example.yaml" ]]; then
+        if [[ ! -f "$whisper_config_dir/config.yaml" ]]; then
+            cp "$SCRIPT_DIR/config/config.example.yaml" "$whisper_config_dir/config.yaml"
+            success "Config file created at $whisper_config_dir/config.yaml"
+        else
+            success "Config file already exists at $whisper_config_dir/config.yaml"
+        fi
+    fi
+    
+    # Also copy port file for convenience
+    echo "7861" > "$whisper_config_dir/port"
+    
+    success "Configuration installed"
 }
 
 # Install systemd service
@@ -701,6 +746,7 @@ main() {
             setup_cuda_compat
             install_python_packages
             install_scripts
+            install_config
             install_systemd_service
             setup_ydotool
             setup_env_file
